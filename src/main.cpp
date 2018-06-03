@@ -9,11 +9,16 @@
 #include "Eigen-3.3/Eigen/QR"
 #include "json.hpp"
 #include "spline.h"
+#include "behaviorPlanner.h"
 
 using namespace std;
 
 // for convenience
 using json = nlohmann::json;
+
+// BehaviorPlanner analyzes Sensor Fusion data and indicates
+// if there are cars ahead and in left and right lanes.
+BehaviorPlanner behavPlanner;
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
@@ -258,6 +263,11 @@ int main() {
                   car_s = end_path_s;
                 }
 
+                otherCarPositions others;
+                others.ahead = others.left = others.right = false;
+
+                behavPlanner.decideBehavior( car_s, lane, prev_size, sensor_fusion, others);
+#if 0
                 bool too_close = false;
                 
                 // Find ref velocity to use.
@@ -296,7 +306,45 @@ int main() {
                     }
                   }
                 }
+#endif
 
+                // Decide whether to change lanes and to which lane.
+                // Adjust the reference velocity as needed.
+                if( others.ahead ) {
+                  if( !others.left && lane > 0 ) {
+                    // There is a car ahead. There is a left lane and
+                    // there is no car in the left lane. 
+                    // Move to the left lane.
+                    lane--;
+                  } else if( !others.right && lane != 2 ) {
+                    // There is a car ahead. There is a right lane and
+                    // there is no car in in the right lane.
+                    // Move to the right lane.
+                    lane++;
+                  } else {
+                    // There is a car ahead. There are cars in both the
+                    // left lane and the right lane. No where to go.
+                    // Reduce the speed.
+                    ref_velocity -= 0.224; // 5 m/s/s (meter per second square) 
+                  }
+                } /* if( others.ahead ) */
+                else {
+                  // There is no car ahead.
+                  // If the ego car is not in the center lane, 
+                  // move to the center lane. But make sure there is no car
+                  // in the center lane. 
+                  if( lane != 1 ) {
+                    if( ( lane == 0 && !others.right ) || (lane == 2 && !others.left ) ) {
+                      // Safe to move to the center lane.
+                      lane = 1;
+                    }
+                  }
+                  // Check and adjsut the speed.
+                  if( ref_velocity < 49.5 ) {
+                    ref_velocity += 0.224;
+                  }
+                } /* else */      
+                  
           	json msgJson;
 
                 // Define the actual (x,y) points we will use for the path planner.
@@ -408,6 +456,7 @@ int main() {
                  for( int i = 1; i <= 50 - previous_path_x.size(); i++)
                  {
 
+#if 0
                    if( too_close )
                    {
                      // Closer to the car before us, reduce speed.
@@ -418,6 +467,7 @@ int main() {
                      // Avoid quick acceleration. Increase speedincrementally.:w
                      ref_velocity += 0.224;
                    }
+#endif
 
                    double N = (target_dist / (0.02*ref_velocity/2.24));
                    double x_point = x_add_on + (target_x) / N;
