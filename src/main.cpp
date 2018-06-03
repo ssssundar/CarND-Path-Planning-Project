@@ -11,19 +11,25 @@
 #include "spline.h"
 #include "behaviorPlanner.h"
 
+
 using namespace std;
+
 
 // for convenience
 using json = nlohmann::json;
 
+
 // BehaviorPlanner analyzes Sensor Fusion data and indicates
-// if there are cars ahead and in left and right lanes.
+// if there are cars ahead and in left and right lanes
+// within unsafe distance.
 BehaviorPlanner behavPlanner;
+
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
 double rad2deg(double x) { return x * 180 / pi(); }
+
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -40,10 +46,12 @@ string hasData(string s) {
   return "";
 }
 
+
 double distance(double x1, double y1, double x2, double y2)
 {
 	return sqrt((x2-x1)*(x2-x1)+(y2-y1)*(y2-y1));
 }
+
 
 int ClosestWaypoint(double x, double y, const vector<double> &maps_x, const vector<double> &maps_y)
 {
@@ -67,6 +75,7 @@ int ClosestWaypoint(double x, double y, const vector<double> &maps_x, const vect
 	return closestWaypoint;
 
 }
+
 
 int NextWaypoint(double x, double y, double theta, const vector<double> &maps_x, const vector<double> &maps_y)
 {
@@ -93,6 +102,7 @@ int NextWaypoint(double x, double y, double theta, const vector<double> &maps_x,
 
     return closestWaypoint;
 }
+
 
 // Transform from Cartesian x,y coordinates to Frenet s,d coordinates
 vector<double> getFrenet(double x, double y, double theta, const vector<double> &maps_x, const vector<double> &maps_y)
@@ -143,6 +153,7 @@ vector<double> getFrenet(double x, double y, double theta, const vector<double> 
 
 }
 
+
 // Transform from Frenet s,d coordinates to Cartesian x,y
 vector<double> getXY(double s, double d, const vector<double> &maps_s, const vector<double> &maps_x, const vector<double> &maps_y)
 {
@@ -170,6 +181,7 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s, const vec
 	return {x,y};
 
 }
+
 
 int main() {
   uWS::Hub h;
@@ -214,10 +226,10 @@ int main() {
 
   // Car should stay as close to the reference velocity as possible.
   // To start with, the reference velocity is set to 0 so that the
-  // car can smoothly accelerate.
+  // car can smoothly accelerate to the maximum velocity.
   double ref_velocity = 0.0; //mph
 
-  h.onMessage([&ref_velocity, &map_waypoints_x, &map_waypoints_y, &map_waypoints_s, &map_waypoints_dx, &map_waypoints_dy, &lane]
+  h.onMessage([&map_waypoints_x, &map_waypoints_y, &map_waypoints_s,&map_waypoints_dx, &map_waypoints_dy, &lane, &ref_velocity]
               (uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
 
     // "42" at the start of the message means there's a websocket message event.
@@ -263,94 +275,22 @@ int main() {
                   car_s = end_path_s;
                 }
 
-                otherCarPositions others;
-                others.ahead = others.left = others.right = false;
+                otherCarPositions other_cars;
+                other_cars.ahead = other_cars.left = other_cars.right = false;
 
-                behavPlanner.decideBehavior( car_s, lane, prev_size, sensor_fusion, others);
-#if 0
-                bool too_close = false;
-                
-                // Find ref velocity to use.
-                for( int i = 0; i < sensor_fusion.size(); i++)
-                {
-                  // Car is in my lane.
-                  float d = sensor_fusion[i][6];
-                  if( d < (2 + 4*lane + 2) && d > (2 + 4*lane - 2) )
-                  {
-                    double vx = sensor_fusion[i][3];
-                    double vy = sensor_fusion[i][4];
-                    double check_speed = sqrt(vx * vx + vy * vy);
-                    double check_car_s = sensor_fusion[i][5];
-                                  
-                    check_car_s += ((double)prev_size*.02*check_speed);
-                    
-                    //Check s value is greater than mine and s gap.
-                    if((check_car_s > car_s) && ((check_car_s - car_s) < 30))
-                    {
-                      // Lower the reference velocity so we do not crash in to
-                      // the car in front of us. Could also flag to try to
-                      // change lanes.
-                      //ref_velocity = 29.5; //mph
-                      too_close = true;
-                      if(( lane == 2 ) || (lane == 0 ))
-                      {
-                        // Check if it is safe to move to lane 1.
-                        lane = 1;
-                      }
-                      else if (lane == 1)
-                      {
-                        // Check which lane is safer to move. lane 0 or lane 2?
-                        lane = 2;
-                      
-                      }
-                    }
-                  }
-                }
-#endif
+                // Use the BehaviorPlanner class to analyze the Sensor Fusion
+                // data and indicate if there are other cars ahead, to the left
+                // and to the right of the ego car within unsafe distance.
+                // If cars are present within an unsafe distance, the
+                // corresponding flags ahead, left and right are set to "true".
+                behavPlanner.areCarsPresentInLanes( car_s, lane, prev_size, sensor_fusion, other_cars);
 
-                // Decide whether to change lanes and to which lane.
-                // Adjust the reference velocity as needed.
-                if( others.ahead ) {
-                  if( !others.left && lane > 0 ) {
-                    // There is a car ahead. There is a left lane and
-                    // there is no car in the left lane. 
-                    // Move to the left lane.
-                    lane--;
-                  } else if( !others.right && lane != 2 ) {
-                    // There is a car ahead. There is a right lane and
-                    // there is no car in in the right lane.
-                    // Move to the right lane.
-                    lane++;
-                  } else {
-                    // There is a car ahead. There are cars in both the
-                    // left lane and the right lane. No where to go.
-                    // Reduce the speed.
-                    ref_velocity -= 0.224; // 5 m/s/s (meter per second square) 
-                  }
-                } /* if( others.ahead ) */
-                else {
-                  // There is no car ahead.
-                  // If the ego car is not in the center lane, 
-                  // move to the center lane. But make sure there is no car
-                  // in the center lane. 
-                  if( lane != 1 ) {
-                    if( ( lane == 0 && !others.right ) || (lane == 2 && !others.left ) ) {
-                      // Safe to move to the center lane.
-                      lane = 1;
-                    }
-                  }
-                  // Check and adjsut the speed.
-                  if( ref_velocity < 49.5 ) {
-                    ref_velocity += 0.224;
-                  }
-                } /* else */      
-                  
-          	json msgJson;
+                // Now that we know the position  of cars ahead and in adjacent
+                // lanes, use the BehaviorPlanner class to determine if it is
+                // necessary and safe to do a lane change.
+                behavPlanner.determineLaneAndVelocity( other_cars, lane, ref_velocity );
 
-                // Define the actual (x,y) points we will use for the path planner.
-          	vector<double> next_x_vals;
-          	vector<double> next_y_vals;
-               
+
                  // Create a list of widely spaced (x,y) waypoints, evenly
                  // spaced at 30m. Later, we will interpolate these waypoints
                  // with a spline and fill it in with more waypoints that
@@ -401,7 +341,7 @@ int main() {
  
                  }
 
-                 // In Frenet, add evenly 30m spaced points ahead of teh
+                 // In Frenet, add evenly 30m spaced points ahead of the
                  // starting reference points.
                  vector<double> next_wp0 = getXY(car_s+30, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
                  vector<double> next_wp1 = getXY(car_s+60, (2+4*lane), map_waypoints_s, map_waypoints_x, map_waypoints_y);
@@ -432,8 +372,12 @@ int main() {
                  // Create a Spline
                  tk::spline spl;
 
-                 // Set (x,y) points to teh spline.
+                 // Set (x,y) points to the spline.
                  spl.set_points( ptsx, ptsy );
+
+                 // Define the actual (x,y) points we will use for the path planner.
+                 vector<double> next_x_vals;
+                 vector<double> next_y_vals;
 
                  // Start with all of the previous path points from the last time.
                  for( int i = 0; i < previous_path_x.size(); i++ )
@@ -456,18 +400,6 @@ int main() {
                  for( int i = 1; i <= 50 - previous_path_x.size(); i++)
                  {
 
-#if 0
-                   if( too_close )
-                   {
-                     // Closer to the car before us, reduce speed.
-                     ref_velocity -= 0.224; // 5 m/s*s
-                   }
-                   else if (ref_velocity < 49.5)
-                   {
-                     // Avoid quick acceleration. Increase speedincrementally.:w
-                     ref_velocity += 0.224;
-                   }
-#endif
 
                    double N = (target_dist / (0.02*ref_velocity/2.24));
                    double x_point = x_add_on + (target_x) / N;
@@ -490,8 +422,8 @@ int main() {
                    
                  }
                  
+                json msgJson;
 
-          	// TODO: define a path made up of (x,y) points that the car will visit sequentially every .02 seconds
           	msgJson["next_x"] = next_x_vals;
           	msgJson["next_y"] = next_y_vals;
 
@@ -510,7 +442,7 @@ int main() {
 
   // We don't need this since we're not using HTTP but if it's removed the
   // program
-  // doesn't compile :-(
+  // doesn't compile :-(:1
   h.onHttpRequest([](uWS::HttpResponse *res, uWS::HttpRequest req, char *data,
                      size_t, size_t) {
     const std::string s = "<h1>Hello world!</h1>";

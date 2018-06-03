@@ -1,8 +1,17 @@
 #include <math.h>
 #include "behaviorPlanner.h"
 
-void BehaviorPlanner::decideBehavior(double ego_s, int ego_lane, int prev_size,
-             vector<vector<double>> sensor_fusion, otherCarPositions& others) {
+
+/******************************************************************************
+Function: areCarsPresentInLanes()
+          Analyzes sensor fusion data.
+          If there are cars ahead, in the left lane and the right lane
+          within an unsafe distance, sets teh corresponding flag
+          ahead, left and right to "true".
+******************************************************************************/
+
+void BehaviorPlanner::areCarsPresentInLanes(double ego_s, int ego_lane, int prev_size,
+             vector<vector<double>> sensor_fusion, otherCarPositions& other_cars) {
 
 
   for(int i = 0; i < sensor_fusion.size(); i++ ) {
@@ -30,23 +39,88 @@ void BehaviorPlanner::decideBehavior(double ego_s, int ego_lane, int prev_size,
     // to the ego car.
     if( other_lane == ego_lane ) {
       
-      others.ahead |= other_s > ego_s &&  other_s - ego_s < 30;
+      other_cars.ahead |= other_s > ego_s &&  other_s - ego_s < SAFE_DISTANCE;
 
     } else if( other_lane - ego_lane == -1 ) {
 
-      others.left |= ego_s - 30 < other_s &&  ego_s + 30 > other_s;
+      other_cars.left |= ego_s - SAFE_DISTANCE < other_s &&  ego_s + SAFE_DISTANCE > other_s;
 
     } else if( other_lane - ego_lane == 1 ) {
 
-      others.right |= ego_s - 30 < other_s && ego_s + 30 > other_s;
+      other_cars.right |= ego_s - SAFE_DISTANCE < other_s && ego_s + SAFE_DISTANCE > other_s;
 
     } 
 
   } /* for(sensor_fusion) */
 
-} /* decideBehavior */
+} /* areCarsPresentInLanes() */
 
+/******************************************************************************
+Function: determineLaneAndVelocity()
+          Based on the ego car's lane and the presence of other cars within
+          an unsafe distance either in teh ego car's lane or in other lanes,
+          decides whether to stay in the same lane or change lanes.
+          If in leftmost or rightmost lane, if safe, decides to move to the
+          center lane. 
+          Either reduces or increases the reference velocity based on the
+          current speed and the presense of car ahead.
+******************************************************************************/
+void BehaviorPlanner::determineLaneAndVelocity( otherCarPositions& other_cars, int& lane, double& ref_velocity) {
 
+  // Decide whether to change lanes and to which lane.
+  // Adjust the reference velocity as needed.
+  
+  if( other_cars.ahead ) {
+    if( !other_cars.left && lane > 0 ) {
+
+      // There is a car ahead. There is a left lane and
+      // there is no car in the left lane.
+      // Move to the left lane.
+      lane--;
+
+    } else if( !other_cars.right && lane != 2 ) {
+
+      // There is a car ahead. There is a right lane and
+      // there is no car in in the right lane.
+      // Move to the right lane.
+      lane++;
+
+    } else {
+
+      // There is a car ahead. There are cars in both the
+      // left lane and the right lane. No where to go.
+      // Reduce the speed.
+      ref_velocity -= ACCEL_STEP; // 5 m/s/s (meter per secondsquare)
+
+    }
+
+  } /* if( other_cars.ahead ) */
+  else {
+
+    // There is no car ahead.
+    // If the ego car is not in the center lane,
+    // move to the center lane. But make sure there is no car
+    // in the center lane.
+    if( lane != 1 ) {
+      if( ( lane == 0 && !other_cars.right ) || (lane == 2 &&!other_cars.left ) ) {
+        // Safe to move to the center lane.
+        lane = 1;
+      }
+     }
+
+     // Check and adjsut the speed.
+     if( ref_velocity < MAX_SPEED ) {
+       ref_velocity += ACCEL_STEP;
+     }
+  } /* else */
+
+} /* determineLaneAndVelocity() */
+
+/******************************************************************************
+Function: getLaneFromD()
+          Given a Fernet coordinate value d, determines the lane number.
+          Each lane is 4 meters in width.
+******************************************************************************/
 int BehaviorPlanner::getLaneFromD( double d) {
 
   int car_lane = -1;
